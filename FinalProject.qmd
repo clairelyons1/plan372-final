@@ -1,0 +1,171 @@
+---
+title: "Final Project"
+author: "Claire Lyons"
+format: html
+editor: visual
+---
+
+## Final Project
+
+```{r}
+library(tidyverse)
+library(sf)
+```
+
+```{r}
+census = read_sf(here::here("Census_Population_Block_groups", "Census_Population_Block_Groups.shp"))
+
+landfills = read_sf(here::here("Permitted_Solid_Waste_Landfills", "SW_PermittedSolidWasteLandfills.shp"))
+
+```
+
+```{r}
+# Filtering to only see active landfills in meck county
+landfills_meck = landfills |>
+  filter(County == "Mecklenburg" & Status == "Open")
+
+```
+
+```{r}
+census = st_transform(census, 32119)
+landfills_meck = st_transform(landfills_meck, 32119)
+```
+
+```{r}
+landfill_buffer = st_buffer(landfills_meck, 1.8 * 1609.34)
+landfill_buffer = st_transform(landfill_buffer, 32119)
+```
+
+```{r}
+ggplot() +
+  geom_sf(data=census) +
+  geom_sf(data = landfill_buffer, fill = NA, color = "green", lwd=1) +
+  geom_sf(data=landfills_meck, color = "red")
+```
+
+```{r}
+census$pct_african_american = census$African_Am / census$Population * 100
+census$percent_white = census$White / census$Population * 100
+
+# From Stack Overflow, wanted to mimic the quantile bins in QGIS
+census = census |>
+  mutate(quantile_bin = cut(pct_african_american, breaks = quantile(pct_african_american, probs = seq(0,1,by=0.2), na.rm=TRUE), include.lowest =TRUE))
+
+census = census |>
+  mutate(quantile_bin_white = cut(percent_white, breaks = quantile(percent_white, probs = seq(0,1,by=0.2), na.rm=TRUE), include.lowest =TRUE))
+```
+
+```{r}
+# Meck county race breakdown
+pct_white = sum(census$White) / sum(census$Population) * 100
+pct_africanam = sum(census$African_Am) / sum(census$Population) * 100
+pct_asian = sum(census$Asian) / sum(census$Population) * 100
+pct_amerin = sum(census$AmerIn_Ala) / sum(census$Population) * 100
+pct_hispanic = sum(census$Hispanic) / sum(census$Population) * 100
+```
+
+```{r}
+ggplot() +
+  geom_sf(data = census, aes(fill = quantile_bin), lwd = 0) +
+  scale_fill_brewer(palette = "Blues") +  # Works with categorical data
+  labs(
+    fill = "Percent African American Population"
+  )
+```
+
+```{r}
+ggplot() +
+  geom_sf(data = census, aes(fill = quantile_bin_white), lwd = 0) +
+  scale_fill_brewer(palette = "Blues") +  # Works with categorical data
+  labs(
+    fill = "Percent White Population"
+  )
+```
+
+```{r}
+ggplot() +
+  geom_sf(data = census, aes(fill = quantile_bin), lwd = 0) +
+  geom_sf(data = landfill_buffer, fill = NA, color = "green", lwd=1) +
+  geom_sf(data = landfills_meck, color = "red") +
+  scale_fill_brewer(palette = "Blues") +  # Works with categorical data
+  labs(
+    fill = "Percent African American"
+  )
+```
+
+```{r}
+# census tracts that overlap with the buffer zones
+overlap_census = st_intersects(census, landfill_buffer)
+
+sum(census$Population)
+```
+
+```{r}
+census$at_risk = apply(overlap_census, 1, any)
+
+# highlighted census zones will be counted in population calculations for at-risk tracts
+ggplot() +
+  geom_sf(data=census, aes(fill = at_risk)) +
+  geom_sf(data = landfill_buffer, fill = NA, color = "green", lwd=1) +
+  geom_sf(data = landfills_meck, color = "red") +
+  labs(fill = "Intersects")
+```
+
+```{r}
+census_risk = census |>
+  filter(at_risk == 1)
+
+sum(census_risk$Population) / sum(census$Population)
+
+```
+
+```{r}
+# Demographic makeup of census tracts indicated to be high risk
+pct_white_risk = sum(census_risk$White) / sum(census_risk$Population) * 100
+pct_africanam_risk = sum(census_risk$African_Am) / sum(census_risk$Population) * 100
+pct_asian_risk = sum(census_risk$Asian) / sum(census_risk$Population) * 100
+pct_amerin_risk = sum(census_risk$AmerIn_Ala) / sum(census_risk$Population) * 100
+pct_hispanic_risk = sum(census_risk$Hispanic) / sum(census_risk$Population) * 100
+```
+
+```{r}
+populations = tribble(
+  ~Race_Ethnicity, ~Buffer, ~County,
+  "White", pct_white_risk, pct_white,
+  "African American", pct_africanam_risk, pct_africanam,
+  "American Indian/Alaska Native", pct_amerin_risk, pct_amerin,
+  "Asian", pct_asian_risk, pct_asian,
+  "Hispanic", pct_hispanic_risk, pct_hispanic
+)
+
+populations_long = populations |>
+  pivot_longer(cols = c(Buffer, County),
+               names_to = "buffer_county",
+               values_to = "proportion")
+
+head(populations)
+```
+
+```{r}
+differences = populations |>
+  summarize(Race_Ethnicity = Race_Ethnicity, Difference = (County - Buffer))
+  
+head(differences)
+```
+
+```{r}
+ggplot(differences, aes(x = Race_Ethnicity, y = Difference)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+ggplot(populations_long, aes(x=Race_Ethnicity, y=proportion, fill=buffer_county)) +
+  geom_col(position="dodge") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "Race/Ethnicity",
+    y = "Percent",
+    fill = "Buffer or Countywide"
+  )
+```
